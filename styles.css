@@ -319,6 +319,25 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 .chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+/* le selecteur de source doit se lire comme un bouton, pas comme une etiquette */
+.chip.pick {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 500;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.chip.pick .lbl {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  opacity: .65;
+  flex: none;
+}
 .chip.ok   { background: var(--ok-soft);   border-color: transparent; color: var(--ok); }
 .chip.warn { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
 .chip.bad  { background: var(--bad-soft);  border-color: transparent; color: var(--bad); }

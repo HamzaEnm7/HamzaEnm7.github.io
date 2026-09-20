@@ -802,12 +802,12 @@ VIEWS.decode = function (v) {
   <div class="stack-l">
     <section class="stack">
       <div class="spread">
-        <button class="chip" id="pick-src">${esc(src.title)} ▾</button>
+        <button class="chip pick" id="pick-src"><span class="lbl">Source</span> ${esc(src.title)} ▾</button>
         <span class="mono tiny muted">${DEC.queue
           ? "ciblé " + (DEC.qi + 1) + " / " + DEC.queue.length
           : (DEC.i + 1) + " / " + src.segments.length}</span>
       </div>
-      <div class="spread">
+      <div class="row" style="gap:6px">
         <div class="row-tight" style="gap:4px">
           <button class="chip on" data-mode="dictee">Dictée</button>
           <button class="chip" data-mode="echo">Shadowing</button>
@@ -1123,7 +1123,7 @@ function VIEWS_echo(v) {
   <div class="stack-l">
     <section class="stack">
       <div class="spread">
-        <button class="chip" id="pick-src">${esc(src.title)} ▾</button>
+        <button class="chip pick" id="pick-src"><span class="lbl">Source</span> ${esc(src.title)} ▾</button>
         <span class="mono tiny muted">${DEC.i + 1} / ${src.segments.length}</span>
       </div>
       <div class="row-tight" style="gap:4px">
