@@ -2199,6 +2199,27 @@ Regles :
 - Chaque segment doit contenir au moins une reduction reelle. Ecarte les passages sans parole.`;
 }
 
+/* Un autre modèle écrit "2:03" aussi volontiers que 123.4, et appelle les
+   bornes t/e, start/end ou startTime/endTime selon son humeur. On accepte
+   tout plutôt que de perdre les horodatages en silence — sans eux, la vidéo
+   ne se cale nulle part. */
+function toSeconds(v) {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+  if (/^(\d{1,2}:)?\d{1,2}:\d{2}(\.\d+)?$/.test(s)) {
+    const p = s.split(":").map(parseFloat);
+    return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+  }
+  return null;
+}
+
+function firstDefined() {
+  for (let i = 0; i < arguments.length; i++) if (arguments[i] != null) return arguments[i];
+  return null;
+}
+
 function importAnalysis(raw) {
   let data;
   try { data = JSON.parse(raw); } catch (e) {
@@ -2219,10 +2240,11 @@ function importAnalysis(raw) {
       fr: typeof s.fr === "string" ? s.fr : "",
       tags: Array.isArray(s.tags) ? s.tags.filter(t => PATTERN_LABEL[t]) : []
     };
-    const t = Number(s.t), e = Number(s.e);
-    if (isFinite(t) && t >= 0) {
+    const t = toSeconds(firstDefined(s.t, s.start, s.startTime, s.from));
+    const e = toSeconds(firstDefined(s.e, s.end, s.endTime, s.to));
+    if (t != null && t >= 0) {
       seg.t = t;
-      seg.e = (isFinite(e) && e > t) ? e : t + Math.max(2, seg.full.split(/\s+/).length / 3);
+      seg.e = (e != null && e > t) ? e : t + Math.max(2, seg.full.split(/\s+/).length / 3);
     }
     segs.push(seg);
   }
@@ -2239,6 +2261,8 @@ function importAnalysis(raw) {
     accent: accents.indexOf(data.accent) >= 0 ? data.accent : ""
   };
   const timed = segs.filter(s => s.t != null).length;
+  // des segments sans horodatage restent utilisables en synthèse vocale,
+  // mais la vidéo ne pourra pas se caler dessus : il faut le dire.
   return { item: item, timed: timed, total: segs.length };
 }
 
