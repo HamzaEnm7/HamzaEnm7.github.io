@@ -1783,7 +1783,18 @@ VIEWS.library = function (v) {
     <section class="stack">
       <div class="section-head"><h2>Analyse par un autre modèle</h2></div>
       <p class="small muted">Je ne peux pas regarder une vidéo. Un modèle qui en est capable, lui, peut te sortir une transcription horodatée avec la phonétique. Copie le prompt, donne-lui ta vidéo, et colle sa réponse ici : tout arrive d'un coup, sans passer par la transcription YouTube.</p>
-      <button class="btn ghost block" id="copy-prompt">Copier le prompt à lui donner</button>
+      <div class="field">
+        <label for="cur-n">Combien de vidéos qu'il doit trouver</label>
+        <select id="cur-n"><option>3</option><option selected>5</option><option>8</option></select>
+      </div>
+      <div class="field">
+        <label for="cur-theme">Thème, si tu en veux un</label>
+        <input type="text" id="cur-theme" placeholder="ex. cuisine, football, technologie, humour">
+      </div>
+      <div class="row">
+        <button class="btn ghost grow" id="copy-curate">Qu'il choisisse les vidéos</button>
+        <button class="btn ghost grow" id="copy-one">Je donne la vidéo</button>
+      </div>
       <div class="field">
         <label for="lib-json">Sa réponse (JSON)</label>
         <textarea id="lib-json" rows="5" placeholder='{"title": "...", "yt": "...", "segments": [ ... ]}' spellcheck="false"></textarea>
@@ -1840,26 +1851,28 @@ VIEWS.library = function (v) {
     save(); render();
   });
 
-  $("#copy-prompt").onclick = async () => {
-    const txt = analysisPrompt();
+  const copyPrompt = async txt => {
     try { await navigator.clipboard.writeText(txt); toast("Prompt copié"); }
     catch (e) {
       const ta = $("#lib-json"); ta.value = txt; ta.select();
       toast("Copie automatique refusée — sélectionne et copie à la main");
     }
   };
-  $("#json-save").onclick = () => {
+  $("#copy-curate").onclick = () => copyPrompt(
+    curationPrompt(parseInt($("#cur-n").value, 10) || 5, $("#cur-theme").value.trim()));
+  $("#copy-one").onclick = () => copyPrompt(analysisPrompt());
+
+  $("#json-save").onclick = async () => {
     const st = $("#json-status");
     const raw = $("#lib-json").value.trim();
     if (!raw) { st.innerHTML = '<p class="small" style="color:var(--bad)">Colle d\'abord la réponse.</p>'; return; }
-    let res;
-    try { res = importAnalysis(raw); }
+    let items;
+    try { items = importAnalysis(raw); }
     catch (err) { st.innerHTML = '<p class="small" style="color:var(--bad)">' + esc(err.message) + '</p>'; return; }
-    S.library.push(res.item);
-    save(); pushLibraryItem(res.item);
-    toast(res.total + " segments importés");
-    newSession("lib:" + res.item.id);
-    go("decode", "lib:" + res.item.id);
+    st.innerHTML = '<div class="row-tight small muted"><span class="spinner"></span> Vérification des vidéos auprès de YouTube…</div>';
+    const checked = await verifyAll(items);
+    st.innerHTML = "";
+    openImportReview(checked);
   };
 
   $("#lib-file").onchange = async e => {
@@ -2220,15 +2233,31 @@ function firstDefined() {
   return null;
 }
 
+/* Une analyse, ou tout un lot : à qui l'on demande plusieurs vidéos, un
+   modèle répond naturellement par un tableau. Une entrée mal formée ne doit
+   pas emporter les autres — on la met de côté et on continue. */
 function importAnalysis(raw) {
   let data;
   try { data = JSON.parse(raw); } catch (e) {
-    const m = raw.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error("Ce n'est pas du JSON. Recopie la réponse entière, accolades comprises.");
+    const m = raw.match(/[\[{][\s\S]*[\]}]/);
+    if (!m) throw new Error("Ce n'est pas du JSON. Recopie la réponse entière, crochets ou accolades compris.");
     data = JSON.parse(m[0]);
   }
+  const list = Array.isArray(data) ? data
+    : (Array.isArray(data.videos) ? data.videos
+    : (Array.isArray(data.items) ? data.items : [data]));
+  const items = [], errs = [];
+  list.forEach((d, i) => {
+    try { items.push(buildItem(d)); }
+    catch (e) { errs.push("entrée " + (i + 1) + " : " + e.message); }
+  });
+  if (!items.length) throw new Error(errs.length ? errs.join(" · ") : "Aucune analyse exploitable dans ce JSON.");
+  return items;
+}
+
+function buildItem(data) {
   if (!data || !Array.isArray(data.segments) || !data.segments.length) {
-    throw new Error("Le JSON ne contient pas de tableau « segments ».");
+    throw new Error("pas de tableau « segments »");
   }
   const segs = [];
   for (const s of data.segments) {
@@ -2248,7 +2277,7 @@ function importAnalysis(raw) {
     }
     segs.push(seg);
   }
-  if (!segs.length) throw new Error("Aucun segment exploitable dans ce JSON.");
+  if (!segs.length) throw new Error("aucun segment exploitable");
 
   const accents = ACCENTS.map(a => a.code);
   const item = {
@@ -2260,10 +2289,157 @@ function importAnalysis(raw) {
     yt: ytId(data.yt || data.url || ""),
     accent: accents.indexOf(data.accent) >= 0 ? data.accent : ""
   };
-  const timed = segs.filter(s => s.t != null).length;
-  // des segments sans horodatage restent utilisables en synthèse vocale,
-  // mais la vidéo ne pourra pas se caler dessus : il faut le dire.
-  return { item: item, timed: timed, total: segs.length };
+  return item;
+}
+
+/* Un modèle qui recommande des vidéos en invente parfois. On ne croit donc
+   personne sur parole : YouTube lui-même confirme que l'identifiant existe,
+   et rend le vrai titre et la vraie chaîne. Un identifiant inventé echoue ici,
+   avant d'entrer dans la bibliothèque. */
+async function verifyVideo(id) {
+  if (!id) return { state: "none" };
+  try {
+    const u = "https://www.youtube.com/oembed?url="
+      + encodeURIComponent("https://www.youtube.com/watch?v=" + id) + "&format=json";
+    const r = await fetch(u);
+    if (!r.ok) return { state: "missing" };
+    const j = await r.json();
+    return { state: "ok", title: j.title || "", author: j.author_name || "" };
+  } catch (e) {
+    return { state: "unknown" };   // hors ligne, ou politique de sécurité de l'hôte
+  }
+}
+
+function verifyAll(items) {
+  return Promise.all(items.map(it =>
+    verifyVideo(it.yt).then(check => ({ item: it, check: check }))
+  ));
+}
+
+const VERIFY_LABEL = {
+  ok:      { chip: "ok",   text: "Vérifiée sur YouTube" },
+  missing: { chip: "bad",  text: "Identifiant introuvable" },
+  none:    { chip: "warn", text: "Aucun identifiant vidéo" },
+  unknown: { chip: "warn", text: "Vérification impossible ici" }
+};
+
+/* Le prompt de sélection : c'est lui qui demande à l'autre modèle de choisir
+   les vidéos, pas seulement de découper celle qu'on lui donne. */
+function curationPrompt(n, theme) {
+  return `Tu prepares un programme d'entrainement a la comprehension de l'anglais oral.
+
+L'apprenant : francophone belge, niveau B1-B2. Il lit tres bien l'anglais mais
+decroche des qu'on parle vite. Son blocage n'est ni le vocabulaire ni la
+grammaire : c'est le decodage de la parole connectee, les voyelles reduites en
+schwa, les liaisons, les consonnes avalees, les contractions orales. Objectif :
+comprendre les films, series et podcasts sans sous-titres.
+
+Selectionne ${n} videos YouTube et, dans chacune, LE meilleur passage de 3 a 5
+minutes pour ce travail.${theme ? " Theme souhaite : " + theme + "." : ""}
+
+Criteres de selection, par ordre d'importance :
+1. De la vraie conversation entre plusieurs personnes, pas un monologue lu.
+   Les hesitations, les reprises et les chevauchements sont un atout, pas un defaut.
+2. Une forte densite de reductions reelles.
+3. Varie les accents entre les videos : americain, britannique, et au moins un
+   autre (irlandais, australien, indien, sud-africain...).
+4. Varie la difficulte : commence par un debit modere, finis par du rapide.
+5. Des videos reellement en ligne et publiques. N'invente aucun identifiant :
+   si tu n'es pas certain qu'une video existe, ecarte-la. Les identifiants
+   seront verifies un par un aupres de YouTube, et les faux seront rejetes.
+
+Pour chaque video, transcris le passage choisi en segments de 6 a 16 mots,
+decoupes sur les groupes de souffle, jamais au milieu d'une expression.
+
+Reponds UNIQUEMENT avec un tableau JSON, sans aucun texte autour :
+
+[
+  {
+    "title": "titre court du passage",
+    "yt": "identifiant de 11 caracteres",
+    "accent": "en-US",
+    "why": "une phrase en francais : ce que ce passage entraine precisement",
+    "segments": [
+      {
+        "full": "la phrase exacte, orthographe et ponctuation correctes",
+        "t": 123.4,
+        "e": 129.1,
+        "red": "reecrit comme ca sonne vraiment, ex: whaddaya gonna do aboudit",
+        "ipa": "API large avec les accents toniques",
+        "fr": "traduction francaise naturelle",
+        "tags": ["schwa"]
+      }
+    ]
+  }
+]
+
+Regles de forme :
+- "t" et "e" en secondes depuis le debut de la video. Ils doivent etre exacts :
+  l'application decoupe l'audio dessus. Le format "2:03" est accepte aussi.
+- "accent" parmi : en-US, en-GB, en-AU, en-IE, en-IN, en-ZA, en-NZ, en-CA.
+- "tags" parmi : schwa (formes faibles), gonna (contractions orales), linking
+  (liaison), flap (T qui devient D), elision (consonne tombee), assim (did you
+  devient didja), hdrop (H muet des pronoms), rhythm (rythme accentuel).
+- Chaque segment doit contenir au moins une reduction reelle.
+- Classe les videos de la plus accessible a la plus difficile.`;
+}
+
+/* On ne montre jamais le titre annoncé par le modèle, mais celui que YouTube
+   renvoie : c'est la seule façon de voir qu'une video a été inventée, ou
+   qu'elle existe mais ne parle pas du tout de ce qui était promis. */
+function openImportReview(checked) {
+  const valid = checked.filter(c => c.check.state !== "missing");
+  const broken = checked.length - valid.length;
+
+  const commit = list => {
+    let segs = 0;
+    for (const c of list) {
+      const it = c.item;
+      if (c.check.state === "missing") it.yt = "";          // la vidéo n'existe pas : on garde le texte
+      if (c.check.state === "ok" && c.check.title) it.source = c.check.title;
+      S.library.push(it);
+      pushLibraryItem(it);
+      segs += it.segments.length;
+    }
+    save();
+    toast(list.length + " source" + (list.length > 1 ? "s" : "") + " · " + segs + " segments");
+    const first = list[0] && list[0].item;
+    if (first) { newSession("lib:" + first.id); go("decode", "lib:" + first.id); }
+    else render();
+  };
+
+  sheet(`
+    <h2 style="font-size:19px">Vérification</h2>
+    <p class="small muted" style="margin:6px 0 14px">Chaque identifiant a été soumis à YouTube. Le titre ci-dessous est celui que <em>YouTube</em> renvoie, pas celui annoncé — c'est ainsi qu'on repère une vidéo inventée, ou une vraie vidéo qui ne parle pas du tout du sujet promis.</p>
+    <div class="stack-s">
+      ${checked.map(c => {
+        const L = VERIFY_LABEL[c.check.state] || VERIFY_LABEL.unknown;
+        const a = accentInfo(c.item.accent);
+        const timed = c.item.segments.filter(s => s.t != null).length;
+        return `<div class="card stack-s">
+          <div class="spread">
+            <span style="font-weight:600;font-size:14.5px">${esc(c.item.title)}</span>
+            <span class="chip ${L.chip}">${esc(L.text)}</span>
+          </div>
+          ${c.check.state === "ok"
+            ? `<p class="small">${esc(c.check.title)}<span class="tiny muted"> — ${esc(c.check.author)}</span></p>`
+            : c.check.state === "missing"
+              ? `<p class="tiny" style="color:var(--bad)">Cet identifiant ne correspond à aucune vidéo. Le texte reste utilisable en synthèse vocale, mais sans la vraie voix.</p>`
+              : ""}
+          <span class="tiny muted">${c.item.segments.length} segment${c.item.segments.length > 1 ? "s" : ""} · ${timed} horodaté${timed > 1 ? "s" : ""}${a ? " · " + esc(a.flag) + " " + esc(a.label) : ""}</span>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="stack-s" style="margin-top:16px">
+      ${valid.length ? `<button class="btn primary big block" id="imp-good">Importer ${valid.length === checked.length ? "les " + valid.length + " sources" : "les " + valid.length + " vérifiées"}</button>` : ""}
+      ${broken ? `<button class="btn ghost block" id="imp-all">Tout importer, y compris les ${broken} sans vidéo</button>` : ""}
+      <button class="btn bare block" id="imp-cancel">Annuler</button>
+    </div>
+  `, (root, close) => {
+    const g = $("#imp-good", root); if (g) g.onclick = () => { close(); commit(valid); };
+    const a = $("#imp-all", root);  if (a) a.onclick = () => { close(); commit(checked); };
+    $("#imp-cancel", root).onclick = close;
+  });
 }
 
 /* ───────────────────────── view: settings ───────────────────────── */
