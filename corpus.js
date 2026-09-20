@@ -85,6 +85,98 @@ const SOURCES = [
     url: "" }
 ];
 
+/* ── Parcours ───────────────────────────────────────────────────────────────
+   Trois paliers, du ralenti articulé à la parole avalée. Ce sont des sources,
+   pas des épisodes : un épisode précis meurt en six mois, une source tient.
+   Liens vérifiés le 20/09/2026. */
+
+const PATHWAY = [
+  {
+    tier: 1,
+    name: "Amorce",
+    when: "Tant que tu es sous 55 % de précision",
+    goal: "Installer le réflexe de transcription sur de la parole lente et propre. Ce n'est pas encore de l'anglais réel — c'est l'échauffement.",
+    items: [
+      { name: "VOA Learning English", url: "https://learningenglish.voanews.com",
+        what: "Actualité lue à environ 75 % de la vitesse normale, puis en version normale.",
+        why: "Domaine public : MP3 et transcription téléchargeables librement. C'est la seule source de cette liste dont tu peux importer l'audio dans Schwa en toute légalité et travailler hors ligne.",
+        accent: "Américain", diff: 2, transcript: "Transcription intégrale sous chaque article, MP3 à côté." },
+      { name: "BBC 6 Minute English", url: "https://www.bbc.co.uk/learningenglish/english/features/6-minute-english",
+        what: "Six minutes, deux présentateurs, un thème.",
+        why: "Le format court fait toute la différence : six minutes se transcrivent, une heure non. Et ça t'apporte l'accent britannique, que les sources américaines ne te donneront jamais.",
+        accent: "Britannique", diff: 3, transcript: "Transcription complète sur la page de l'épisode." }
+    ]
+  },
+  {
+    tier: 2,
+    name: "Parole réelle",
+    when: "Entre 55 % et 75 % de précision — c'est ici que tu passeras le plus de temps",
+    goal: "De vraies personnes qui parlent normalement, avec une transcription officielle. Le cœur du travail.",
+    items: [
+      { name: "StoryCorps", url: "https://storycorps.org",
+        what: "Deux personnes qui se racontent leur vie. Souvent moins de quatre minutes.",
+        why: "Le meilleur rapport authenticité/durée de toute la liste. Des gens ordinaires, non scénarisés, qui hésitent, se coupent et avalent leurs mots — exactement ce qui te manque. Et la diversité d'accents et d'âges y est sans équivalent.",
+        accent: "Américain, très varié", diff: 4, transcript: "Transcription fournie sur la page de l'épisode." },
+      { name: "This American Life", url: "https://www.thisamericanlife.org/archive",
+        what: "Récits documentaires : narration posée entrecoupée d'interviews sur le vif.",
+        why: "L'alternance est pédagogiquement parfaite. La narration te laisse respirer, l'interview te met la vraie parole en pleine figure. Transcription intégrale de chaque épisode depuis le premier.",
+        accent: "Américain", diff: 4, transcript: "Onglet Transcript sur chaque épisode, gratuit." },
+      { name: "Freakonomics Radio", url: "https://freakonomics.com/series/freakonomics-radio/",
+        what: "Entretiens sur l'économie et le comportement.",
+        why: "Dialogue à deux voix, registre soutenu mais débit naturel. Bon pour le vocabulaire abstrait, une fois que le décodage de base tient.",
+        accent: "Américain", diff: 4, transcript: "Transcription intégrale sur la page de chaque épisode." },
+      { name: "NPR", url: "https://www.npr.org/transcripts/",
+        what: "Reportages et entretiens radio, tous formats.",
+        why: "Un volume énorme de transcriptions, et des sujets qui changent tous les jours. Utile quand tu veux du neuf sans réfléchir.",
+        accent: "Américain", diff: 4, transcript: "Page de transcriptions dédiée." }
+    ]
+  },
+  {
+    tier: 3,
+    name: "Sans filet",
+    when: "Au-dessus de 75 % sur le palier 2",
+    goal: "Débit plein, accents non balisés, chevauchements. C'est le niveau des séries et des podcasts non préparés.",
+    items: [
+      { name: "TED", url: "https://www.ted.com/talks",
+        what: "Conférences de dix-huit minutes, locuteurs du monde entier.",
+        why: "La vraie raison de venir ici : les intervenants non natifs. Ton oreille doit apprendre l'anglais indien, nigérian, coréen — pas seulement celui de Californie.",
+        accent: "Tous", diff: 4, transcript: "Transcription interactive sous chaque vidéo." },
+      { name: "N'importe quelle vidéo YouTube", url: "https://www.youtube.com",
+        what: "Interviews longues, vlogs, podcasts filmés, extraits de films.",
+        why: "La transcription automatique de YouTube couvre presque tout, avec les horodatages. C'est ce qui rend l'import dans Schwa immédiat, et ce qui te permet de travailler sur ce qui t'intéresse vraiment plutôt que sur du contenu scolaire.",
+        accent: "Tous", diff: 5, transcript: "Sous la vidéo : Plus → Afficher la transcription." },
+      { name: "LibriVox", url: "https://librivox.org",
+        what: "Livres audio lus par des bénévoles du monde entier.",
+        why: "Domaine public, donc audio importable comme VOA. Lecture à voix haute plutôt que conversation, donc moins de réductions — mais une variété d'accents que rien d'autre ne t'offre gratuitement.",
+        accent: "Tous", diff: 3, transcript: "Texte correspondant sur Project Gutenberg." }
+    ]
+  }
+];
+
+/* ── Séries ─────────────────────────────────────────────────────────────────
+   Pas de liste de « meilleurs épisodes » : je ne peux pas regarder les séries,
+   et inventer des horodatages ne te servirait à rien. Ce qui suit, ce sont les
+   critères qui rendent une série facile ou difficile — avec eux, tu juges
+   n'importe quel titre toi-même en deux minutes. */
+
+const SERIES_GUIDE = {
+  rule: "Reprends une série que tu as déjà vue et aimée. Connaître l'histoire libère toute ton attention pour le son. C'est le conseil qui rapporte le plus, et celui qu'on suit le moins.",
+  easier: [
+    { trait: "Rires enregistrés et public en studio", why: "Le mixage privilégie les voix, et chaque rire t'offre une seconde pour traiter ce que tu viens d'entendre." },
+    { trait: "Épisodes de vingt minutes", why: "Assez court pour transcrire un passage sans y passer la soirée." },
+    { trait: "Situations répétitives, décors fixes", why: "Le vocabulaire revient d'un épisode à l'autre : tu capitalises au lieu de repartir de zéro." },
+    { trait: "Personnages qui parlent chacun leur tour", why: "Pas de chevauchement à démêler." }
+  ],
+  harder: [
+    { trait: "Mixage cinéma, musique sous les dialogues", why: "La voix n'est plus prioritaire dans le mixage. Même un natif rate des répliques." },
+    { trait: "Jeu naturaliste, acteurs qui marmonnent", why: "La réduction est poussée au maximum, volontairement." },
+    { trait: "Dialogues qui se chevauchent", why: "Deux flux à décoder en même temps." },
+    { trait: "Accents régionaux marqués", why: "Une couche de plus par-dessus le reste." },
+    { trait: "Jargon dense — médical, juridique, technique", why: "Difficulté de vocabulaire, pas de décodage. À traiter séparément, pas en dictée." }
+  ],
+  method: "Ne transcris jamais un épisode entier. Prends trois à quatre minutes — une seule scène — et travaille-la jusqu'à 90 %. Une scène creusée vaut mieux que dix survolées."
+};
+
 /* ── Prompt d'enrichissement ───────────────────────────────────────────────── */
 
 AI.enrich = function (segments) {

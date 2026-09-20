@@ -533,7 +533,7 @@ function sourceById(id) { return allSources().find(s => s.id === id) || allSourc
 /* ───────────────────────── shell ───────────────────────── */
 
 let route = { view: "today", param: null, sub: null };
-const VIEW_NAME = { today: "Aujourd'hui", decode: "Écouter", lab: "Le Lab", review: "Réviser", write: "Écrire", settings: "Réglages", library: "Bibliothèque" };
+const VIEW_NAME = { today: "Aujourd'hui", decode: "Écouter", lab: "Le Lab", review: "Réviser", write: "Écrire", settings: "Réglages", library: "Bibliothèque", path: "Parcours" };
 
 function go(view, param, sub) {
   Player.stop();
@@ -711,11 +711,15 @@ VIEWS.today = function (v) {
     </section>
 
     <section class="stack">
-      <div class="section-head"><h2>Les deux autres ateliers</h2></div>
+      <div class="section-head"><h2>Les autres ateliers</h2></div>
       <div class="stack-s">
         <button class="lesson-item" id="go-shadow">
           <span class="num">${ICON.mic}</span>
           <span class="grow"><span class="t">Shadowing</span><span class="d">Répéter par-dessus le modèle, sur une échelle de vitesse allant de 0,5× à 1,25×</span></span>
+        </button>
+        <button class="lesson-item" id="go-path">
+          <span class="num">✦</span>
+          <span class="grow"><span class="t">Le parcours</span><span class="d">Quoi écouter, dans quel ordre — sources vérifiées et critères pour juger une série</span></span>
         </button>
         <button class="lesson-item" id="go-lib">
           <span class="num">▶</span>
@@ -768,6 +772,7 @@ VIEWS.today = function (v) {
   $("#next-up").onclick = () => go(na.view, na.param);
   $("#go-shadow").onclick = () => go("decode", null, "echo");
   $("#go-lib").onclick = () => go("library");
+  $("#go-path").onclick = () => go("path");
 };
 
 /* ───────────────────────── view: decode ───────────────────────── */
@@ -798,13 +803,16 @@ VIEWS.decode = function (v) {
     <section class="stack">
       <div class="spread">
         <button class="chip" id="pick-src">${esc(src.title)} ▾</button>
-        <span class="mono tiny muted">${DEC.i + 1} / ${src.segments.length}</span>
+        <span class="mono tiny muted">${DEC.queue
+          ? "ciblé " + (DEC.qi + 1) + " / " + DEC.queue.length
+          : (DEC.i + 1) + " / " + src.segments.length}</span>
       </div>
       <div class="spread">
         <div class="row-tight" style="gap:4px">
           <button class="chip on" data-mode="dictee">Dictée</button>
           <button class="chip" data-mode="echo">Shadowing</button>
         </div>
+        <button class="chip" id="best-moments" title="Les passages qui t'apprendront le plus">✦ Meilleurs moments</button>
         <button class="chip" id="pick-diff" title="Filtre de difficulté">${S.profile.minDiff ? diffDots(S.profile.minDiff) + " et +" : "Tous niveaux"} ▾</button>
       </div>
     </section>
@@ -855,6 +863,7 @@ VIEWS.decode = function (v) {
   $$("[data-rate]").forEach(b => b.onclick = () => { DEC.rate = parseFloat(b.dataset.rate); render(); });
 
   $("#pick-diff").onclick = openDifficultyPicker;
+  $("#best-moments").onclick = openBestMoments;
   const unl = $("#yt-unlock");
   if (unl) unl.onclick = async () => {
     unl.disabled = true; unl.innerHTML = '<span class="spinner"></span>';
@@ -946,7 +955,14 @@ function renderResult(g, seg) {
 function wireResult(seg) {
   const r = $("#replay"); if (r) r.onclick = () => { DEC.listens++; Player.play(seg, DEC.rate, seg.libId, () => {}, seg.accent || DEC.accent); };
   const n = $("#next"); if (n) n.onclick = () => {
-    DEC.i = advanceIndex(DEC.src, DEC.i);
+    if (DEC.queue) {
+      DEC.qi++;
+      if (DEC.qi >= DEC.queue.length) {
+        DEC.queue = null; DEC.qi = 0;
+        toast("Séance ciblée terminée");
+        DEC.i = advanceIndex(DEC.src, DEC.i);
+      } else DEC.i = DEC.queue[DEC.qi];
+    } else DEC.i = advanceIndex(DEC.src, DEC.i);
     S.packProgress[DEC.srcId] = DEC.i;
     DEC.typed = ""; DEC.listens = 0; DEC.checked = null; DEC.explain = null; DEC.doneCount++;
     DEC.accent = pickAccent();
@@ -1764,6 +1780,18 @@ VIEWS.library = function (v) {
       <button class="btn primary block" id="lib-save">Ajouter à la bibliothèque</button>
     </section>
 
+    <section class="stack">
+      <div class="section-head"><h2>Analyse par un autre modèle</h2></div>
+      <p class="small muted">Je ne peux pas regarder une vidéo. Un modèle qui en est capable, lui, peut te sortir une transcription horodatée avec la phonétique. Copie le prompt, donne-lui ta vidéo, et colle sa réponse ici : tout arrive d'un coup, sans passer par la transcription YouTube.</p>
+      <button class="btn ghost block" id="copy-prompt">Copier le prompt à lui donner</button>
+      <div class="field">
+        <label for="lib-json">Sa réponse (JSON)</label>
+        <textarea id="lib-json" rows="5" placeholder='{"title": "...", "yt": "...", "segments": [ ... ]}' spellcheck="false"></textarea>
+      </div>
+      <div id="json-status"></div>
+      <button class="btn primary block" id="json-save">Importer l'analyse</button>
+    </section>
+
     ${S.library.length ? `
     <section class="stack">
       <div class="section-head"><h2>Importés</h2><span class="eyebrow">${S.library.length}</span></div>
@@ -1811,6 +1839,28 @@ VIEWS.library = function (v) {
     Tube.hide();
     save(); render();
   });
+
+  $("#copy-prompt").onclick = async () => {
+    const txt = analysisPrompt();
+    try { await navigator.clipboard.writeText(txt); toast("Prompt copié"); }
+    catch (e) {
+      const ta = $("#lib-json"); ta.value = txt; ta.select();
+      toast("Copie automatique refusée — sélectionne et copie à la main");
+    }
+  };
+  $("#json-save").onclick = () => {
+    const st = $("#json-status");
+    const raw = $("#lib-json").value.trim();
+    if (!raw) { st.innerHTML = '<p class="small" style="color:var(--bad)">Colle d\'abord la réponse.</p>'; return; }
+    let res;
+    try { res = importAnalysis(raw); }
+    catch (err) { st.innerHTML = '<p class="small" style="color:var(--bad)">' + esc(err.message) + '</p>'; return; }
+    S.library.push(res.item);
+    save(); pushLibraryItem(res.item);
+    toast(res.total + " segments importés");
+    newSession("lib:" + res.item.id);
+    go("decode", "lib:" + res.item.id);
+  };
 
   $("#lib-file").onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
@@ -1960,6 +2010,236 @@ function splitPlain(raw) {
     for (let i = 0; i < w.length; i += 13) out.push(w.slice(i, i + 13).join(" "));
   }
   return out.filter(t => t.split(/\s+/).length >= 3).map(full => ({ full, red: "", ipa: "", fr: "", tags: [] }));
+}
+
+/* ───────────────────────── meilleurs moments ─────────────────────────
+   Quels passages d'une source méritent ton temps. Pas un avis : un calcul
+   sur le débit réel mesuré aux horodatages, la densité de mots-outils —
+   ceux que l'anglais écrase — et ta précision des deux dernières semaines.
+   La zone utile est juste au-dessus de ton niveau, jamais au sommet. */
+
+function targetDifficulty() {
+  const a = accuracyOver(14);
+  if (a == null) return 3;
+  if (a >= 0.90) return 5;
+  if (a >= 0.80) return 4.3;
+  if (a >= 0.68) return 3.6;
+  if (a >= 0.55) return 3;
+  return 2.3;
+}
+
+function segValue(seg) {
+  const m = metrics(seg);
+  const fit = 1 - Math.min(1, Math.abs(difficulty(seg) - targetDifficulty()) / 2.5);
+  const reduction = Math.min(1, m.fn / 0.55);
+  const pace = m.wps ? Math.min(1, m.wps / 4.5) : 0.45;
+  const lengthOk = (m.n >= 6 && m.n <= 16) ? 1 : 0.65;
+  const timed = (seg.t != null) ? 1 : 0.85;
+  return (fit * 0.45 + reduction * 0.30 + pace * 0.25) * lengthOk * timed;
+}
+
+function bestMoments(src, n) {
+  return src.segments
+    .map((s, i) => ({ i: i, s: s, v: segValue(s) }))
+    .sort((a, b) => b.v - a.v)
+    .slice(0, n || 8)
+    .sort((a, b) => {
+      const ta = a.s.t != null ? a.s.t : a.i;
+      const tb = b.s.t != null ? b.s.t : b.i;
+      return ta - tb;
+    });
+}
+
+function openBestMoments() {
+  const src = DEC && DEC.src;
+  if (!src) return;
+  const picks = bestMoments(src, 8);
+  const acc = accuracyOver(14);
+  sheet(`
+    <h2 style="font-size:19px">Meilleurs moments</h2>
+    <p class="small muted" style="margin:6px 0 14px">
+      Calculés sur cette source : débit réel, densité de mots écrasés, et ta précision des 14 derniers jours
+      (${acc == null ? "pas encore de données — je vise le niveau moyen" : Math.round(acc * 100) + " %, donc je vise la difficulté " + targetDifficulty().toFixed(1)}).
+      Ce sont les huit passages où tu apprendras le plus, pas les plus durs.
+    </p>
+    <div class="stack-s">
+      ${picks.map(p => `
+        <button class="lesson-item" data-jump="${p.i}">
+          <span class="num mono" style="font-size:10px">${p.s.t != null ? esc(fmtTime(p.s.t)) : p.i + 1}</span>
+          <span class="grow">
+            <span class="t" style="font-size:14px;font-weight:500">${esc(p.s.full.slice(0, 68))}${p.s.full.length > 68 ? "…" : ""}</span>
+            <span class="d">${diffDots(difficulty(p.s))} ${metrics(p.s).wps ? `<span class="mono">${metrics(p.s).wps.toFixed(1)} mots/s</span>` : esc(DIFF_LABEL[difficulty(p.s)])}</span>
+          </span>
+        </button>`).join("")}
+    </div>
+    <button class="btn primary big block" id="run-best" style="margin-top:16px">Lancer la séance — ${picks.length} segments</button>
+    <p class="tiny muted" style="margin-top:10px">La séance enchaîne ces huit-là dans l'ordre chronologique, puis s'arrête.</p>
+  `, (root, close) => {
+    $$("[data-jump]", root).forEach(b => b.onclick = () => {
+      DEC.queue = null; DEC.i = parseInt(b.dataset.jump, 10);
+      DEC.typed = ""; DEC.checked = null; DEC.listens = 0; DEC.explain = null;
+      close(); render();
+    });
+    $("#run-best", root).onclick = () => {
+      DEC.queue = picks.map(p => p.i);
+      DEC.qi = 0;
+      DEC.i = DEC.queue[0];
+      DEC.typed = ""; DEC.checked = null; DEC.listens = 0; DEC.explain = null;
+      close(); render();
+      toast("Séance ciblée lancée");
+    };
+  });
+}
+
+/* ───────────────────────── view: parcours ───────────────────────── */
+
+VIEWS.path = function (v) {
+  const acc = accuracyOver(14);
+  const pct = acc == null ? null : Math.round(acc * 100);
+  const current = pct == null ? 1 : pct < 55 ? 1 : pct < 75 ? 2 : 3;
+
+  v.innerHTML = `
+  <div class="stack-l">
+    <button class="btn bare" id="back" style="align-self:flex-start;margin-left:-8px">${ICON.back} Retour</button>
+    <section class="stack">
+      <h1 style="font-size:25px">Le parcours</h1>
+      <p class="small muted">Des sources, pas des épisodes : un épisode précis disparaît en six mois, une source tient. Chacune a été vérifiée, et chacune fournit une transcription — sans transcription, une vidéo ne sert à rien ici.</p>
+      <div class="card flat stack-s">
+        <span class="eyebrow">Où tu en es</span>
+        <p class="small">${pct == null
+          ? "Fais quelques dictées : ta précision décidera du palier. En attendant, commence par le palier 1."
+          : `<span class="mono" style="font-size:17px;color:var(--accent)">${pct} %</span> de précision sur 14 jours — tu es au <strong>palier ${current}</strong>.`}</p>
+      </div>
+    </section>
+
+    ${PATHWAY.map(tier => `
+      <section class="stack">
+        <div class="section-head">
+          <h2>${tier.tier}. ${esc(tier.name)}</h2>
+          <span class="chip ${tier.tier === current ? "on" : ""}">${tier.tier === current ? "Ton palier" : esc(tier.when.split("—")[0].trim().slice(0, 26))}</span>
+        </div>
+        <p class="small muted">${esc(tier.goal)}</p>
+        <div class="stack-s">
+          ${tier.items.map(it => `
+            <div class="card stack-s">
+              <div class="spread">
+                <h3 style="font-size:16px">${esc(it.name)}</h3>
+                <span class="row-tight tiny muted">${diffDots(it.diff)}</span>
+              </div>
+              <p class="small">${esc(it.what)}</p>
+              <p class="tiny muted">${esc(it.why)}</p>
+              <div class="spread" style="margin-top:2px">
+                <span class="tiny muted">${esc(it.accent)}</span>
+                <a class="chip" target="_blank" rel="noopener" href="${esc(it.url)}">Ouvrir ↗</a>
+              </div>
+              <p class="tiny" style="color:var(--ink-3)">${esc(it.transcript)}</p>
+            </div>`).join("")}
+        </div>
+      </section>`).join("")}
+
+    <section class="stack">
+      <div class="section-head"><h2>Et les séries ?</h2></div>
+      <div class="card" style="border-color:var(--accent)">
+        <p style="font-size:15.5px;line-height:1.6">${esc(SERIES_GUIDE.rule)}</p>
+      </div>
+      <p class="small muted">Je ne peux pas regarder de séries, donc je ne te donnerai pas de palmarès d'épisodes — j'inventerais des horodatages. Voilà plutôt les critères : avec eux tu juges n'importe quel titre en deux minutes.</p>
+      <div class="card stack-s">
+        <span class="eyebrow" style="color:var(--ok)">Plus facile quand…</span>
+        ${SERIES_GUIDE.easier.map(x => `<div class="ex-line" style="grid-template-columns:1fr"><span class="full" style="font-size:14px">${esc(x.trait)}</span><span class="fr">${esc(x.why)}</span></div>`).join("")}
+      </div>
+      <div class="card stack-s">
+        <span class="eyebrow" style="color:var(--bad)">Plus dur quand…</span>
+        ${SERIES_GUIDE.harder.map(x => `<div class="ex-line" style="grid-template-columns:1fr"><span class="full" style="font-size:14px">${esc(x.trait)}</span><span class="fr">${esc(x.why)}</span></div>`).join("")}
+      </div>
+      <div class="plate small">${esc(SERIES_GUIDE.method)}</div>
+    </section>
+
+    <button class="btn primary big block" id="to-lib">Importer une source</button>
+  </div>`;
+
+  $("#back").onclick = () => go("today");
+  $("#to-lib").onclick = () => go("library");
+};
+
+/* ───────────────────────── import d'une analyse ─────────────────────────
+   Je ne sais pas regarder une vidéo. Un modèle qui en est capable, lui, peut
+   en sortir une transcription horodatée ; cette fonction l'avale telle quelle,
+   en vérifiant chaque champ plutôt qu'en faisant confiance. */
+
+function analysisPrompt() {
+  return `Tu prépares du matériel d'entraînement à la compréhension de l'anglais oral, pour un francophone de niveau B1-B2 dont le blocage est le décodage de la parole connectée (réductions en schwa, liaisons, consonnes avalées).
+
+Vidéo à analyser : COLLE_ICI_L_URL_YOUTUBE
+
+Choisis UN SEUL passage de 3 à 5 minutes, celui qui contient le plus de parole naturelle rapide et réduite. Transcris-le en segments de 6 à 16 mots, découpés sur les groupes de souffle, jamais au milieu d'une expression.
+
+Réponds UNIQUEMENT avec ce JSON, sans aucun texte autour :
+
+{
+  "title": "titre court du passage",
+  "yt": "identifiant de la vidéo, 11 caractères",
+  "accent": "en-US",
+  "segments": [
+    {
+      "full": "la phrase exacte, orthographe correcte et ponctuation",
+      "t": 123.4,
+      "e": 129.1,
+      "red": "reecrit comme ca sonne vraiment, ex: whaddaya gonna do aboudit",
+      "ipa": "API large avec les accents toniques",
+      "fr": "traduction francaise naturelle",
+      "tags": ["schwa"]
+    }
+  ]
+}
+
+Regles :
+- "t" et "e" sont des secondes depuis le debut de la video, a la demi-seconde pres. Ils doivent etre exacts : l'application decoupe l'audio dessus.
+- "accent" parmi : en-US, en-GB, en-AU, en-IE, en-IN, en-ZA, en-NZ, en-CA.
+- "tags" parmi : schwa (formes faibles), gonna (contractions orales), linking (liaison), flap (T qui devient D), elision (consonne tombee), assim (did you devient didja), hdrop (H muet des pronoms), rhythm (rythme accentuel). Plusieurs possibles.
+- Chaque segment doit contenir au moins une reduction reelle. Ecarte les passages sans parole.`;
+}
+
+function importAnalysis(raw) {
+  let data;
+  try { data = JSON.parse(raw); } catch (e) {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("Ce n'est pas du JSON. Recopie la réponse entière, accolades comprises.");
+    data = JSON.parse(m[0]);
+  }
+  if (!data || !Array.isArray(data.segments) || !data.segments.length) {
+    throw new Error("Le JSON ne contient pas de tableau « segments ».");
+  }
+  const segs = [];
+  for (const s of data.segments) {
+    if (!s || typeof s.full !== "string" || !s.full.trim()) continue;
+    const seg = {
+      full: String(s.full).trim(),
+      red: typeof s.red === "string" ? s.red : "",
+      ipa: typeof s.ipa === "string" ? s.ipa : "",
+      fr: typeof s.fr === "string" ? s.fr : "",
+      tags: Array.isArray(s.tags) ? s.tags.filter(t => PATTERN_LABEL[t]) : []
+    };
+    const t = Number(s.t), e = Number(s.e);
+    if (isFinite(t) && t >= 0) {
+      seg.t = t;
+      seg.e = (isFinite(e) && e > t) ? e : t + Math.max(2, seg.full.split(/\s+/).length / 3);
+    }
+    segs.push(seg);
+  }
+  if (!segs.length) throw new Error("Aucun segment exploitable dans ce JSON.");
+
+  const accents = ACCENTS.map(a => a.code);
+  const item = {
+    id: uid(),
+    title: (typeof data.title === "string" && data.title.trim()) ? data.title.trim().slice(0, 60) : "Analyse importée",
+    segments: segs.slice(0, 220),
+    hasAudio: false,
+    at: dayKey(),
+    yt: ytId(data.yt || data.url || ""),
+    accent: accents.indexOf(data.accent) >= 0 ? data.accent : ""
+  };
+  const timed = segs.filter(s => s.t != null).length;
+  return { item: item, timed: timed, total: segs.length };
 }
 
 /* ───────────────────────── view: settings ───────────────────────── */
