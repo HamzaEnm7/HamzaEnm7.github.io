@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Schwa</title>
+<meta name="description" content="Entraînement quotidien à la compréhension de l'anglais parlé.">
+
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#ECEFEE" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0C1113" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Schwa">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png" sizes="192x192">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="root">
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="glyph">ə</span>
+        <span class="wordmark">Schwa</span>
+      </div>
+    </header>
+    <main>
+      <div class="stack-l">
+        <div class="hero-goal">
+          <svg class="ring" viewBox="0 0 80 80" aria-hidden="true">
+            <circle class="track" cx="40" cy="40" r="32"></circle>
+          </svg>
+          <div class="stack-s">
+            <h1 style="font-size:26px">Décoder l'anglais parlé</h1>
+            <p class="small muted">Chargement…</p>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Mini-lecteur : hors de #root, donc il survit aux rendus de l'interface -->
+<div id="mini" hidden>
+  <div class="mini-bar">
+    <span class="mini-title"></span>
+    <button data-mini="mask" class="mini-btn">Montrer</button>
+    <button data-mini="dock" class="mini-btn" aria-label="Changer de coin">⇅</button>
+    <button data-mini="close" class="mini-btn" aria-label="Fermer">✕</button>
+  </div>
+  <div class="mini-stage">
+    <div id="yt-slot"><div id="yt-frame"></div></div>
+    <div class="mini-veil">
+      <span class="mono">AUDIO SEUL</span>
+      <button data-mini="reveal" class="btn sm ghost">Révéler l'image</button>
+    </div>
+  </div>
+</div>
+
+<script src="content.js"></script>
+<script src="corpus.js"></script>
+<script src="ai.js"></script>
+<script src="yt.js"></script>
+<script src="app.js"></script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  });
+}
+</script>
+</body>
+</html>
