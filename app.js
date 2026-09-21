@@ -1737,6 +1737,17 @@ VIEWS.library = function (v) {
       <p class="small muted">C'est ici que ça devient sérieux. Les packs de départ sont lus par une voix de synthèse qui articule trop proprement. Ici, tu travailles sur de la vraie parole : ta série, ton podcast, au vrai débit, avec les vraies voix et les vrais accents.</p>
     </section>
 
+    <section class="card stack-s" style="border-color:var(--accent)">
+      <span class="eyebrow" style="color:var(--accent)">Paquet de podcasts</span>
+      <p class="small">Plusieurs épisodes d'un coup, avec leur vrai audio et une transcription Whisper calée au mot près. Préparés par ton ordinateur.</p>
+      <label class="field" for="pack-file" style="gap:6px">
+        <span class="small" style="font-weight:500">Choisis le fichier <span class="mono">schwa-podcasts-….zip</span></span>
+        <input type="file" id="pack-file" accept=".zip,application/zip">
+      </label>
+      <div id="pack-status"></div>
+      <p class="tiny muted">Sur l'ordinateur : double-clic sur <span class="mono">podcasts.bat</span> dans <span class="mono">schwa-tools</span>. Le paquet arrive dans OneDrive → Schwa ; sur le téléphone, choisis-le depuis Fichiers → OneDrive. Importe-le depuis l'app installée sur l'écran d'accueil, pas depuis Safari : les deux ne partagent pas leur stockage.</p>
+    </section>
+
     <section class="card flat stack-s">
       <span class="eyebrow">Depuis YouTube, en trois gestes</span>
       <ol class="steps">
@@ -1943,6 +1954,28 @@ VIEWS.library = function (v) {
     const checked = await verifyAll(items);
     st.innerHTML = "";
     openImportReview(checked);
+  };
+
+  $("#pack-file").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    const st = $("#pack-status");
+    st.innerHTML = '<div class="row-tight small muted"><span class="spinner"></span> Ouverture du paquet…</div>';
+    try {
+      const r = await importPack(f, (i, n, name) => {
+        st.innerHTML = '<div class="row-tight small muted"><span class="spinner"></span> ' + i + ' / ' + n + ' — ' + esc(name) + '</div>';
+      });
+      if (!r.added) {
+        st.innerHTML = '<p class="small" style="color:var(--warn)">' + (r.skipped
+          ? "Rien de nouveau : ces épisodes sont déjà dans ta bibliothèque."
+          : "Ce paquet ne contient aucun épisode exploitable.") + '</p>';
+      } else {
+        toast(r.added + " épisode" + (r.added > 1 ? "s" : "") + " · " + r.segs + " segments");
+        render();
+      }
+    } catch (err) {
+      st.innerHTML = '<p class="small" style="color:var(--bad)">' + esc(err.message || "Import impossible.") + '</p>';
+    }
+    e.target.value = "";
   };
 
   $("#lib-file").onchange = async e => {
@@ -2706,6 +2739,66 @@ function openImportReview(checked) {
     const a = $("#imp-all", root);  if (a) a.onclick = () => { close(); commit(checked); };
     $("#imp-cancel", root).onclick = close;
   });
+}
+
+/* ───────────────────────── paquets de podcasts ─────────────────────────
+   Un .zip préparé par l'ordinateur (podcasts.bat) : pour chaque épisode, un
+   extrait audio et sa transcription Whisper, horodatée au mot près. L'audio
+   part dans IndexedDB, comme un fichier importé à la main, et la lecture se
+   cale ensuite sur les horodatages. Rien ne transite par un serveur. */
+
+let jszipP = null;
+function loadJSZip() {
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  if (jszipP) return jszipP;
+  jszipP = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    s.onload = () => window.JSZip ? res(window.JSZip) : rej(new Error("Lecteur de .zip indisponible."));
+    s.onerror = () => { jszipP = null; rej(new Error("Impossible de charger le lecteur de .zip — vérifie ta connexion.")); };
+    document.head.appendChild(s);
+  });
+  return jszipP;
+}
+
+async function importPack(file, onStep) {
+  const JSZip = await loadJSZip();
+  const zip = await JSZip.loadAsync(file);
+  const idxFile = zip.file("index.json");
+  if (!idxFile) throw new Error("Ce .zip n'est pas un paquet Schwa : il lui manque son index.");
+  const idx = JSON.parse(await idxFile.async("string"));
+  if (!idx || !Array.isArray(idx.episodes)) throw new Error("Paquet illisible.");
+
+  const accents = ACCENTS.map(a => a.code);
+  let added = 0, skipped = 0, segs = 0;
+  for (let i = 0; i < idx.episodes.length; i++) {
+    const ep = idx.episodes[i];
+    onStep && onStep(i + 1, idx.episodes.length, ep.podcast || "");
+    // le même épisode importé deux fois ne doit pas se dupliquer
+    if (ep.key && S.library.some(l => l.srcKey === ep.key)) { skipped++; continue; }
+    const f = ep.audio && zip.file(ep.audio);
+    if (!f || !Array.isArray(ep.segments) || !ep.segments.length) { skipped++; continue; }
+
+    const id = uid();
+    await Blobs.put(id, new Blob([await f.async("uint8array")], { type: "audio/mp4" }));
+    const item = {
+      id: id,
+      title: ((ep.podcast ? ep.podcast + " — " : "") + (ep.title || "Épisode")).slice(0, 90),
+      segments: ep.segments.slice(0, 220).filter(s => s && s.full).map(s => ({
+        full: String(s.full), t: Number(s.t), e: Number(s.e), red: "", ipa: "", fr: "", tags: []
+      })),
+      hasAudio: true,
+      at: dayKey(),
+      yt: "",
+      accent: accents.indexOf(ep.accent) >= 0 ? ep.accent : "",
+      srcKey: ep.key || ""
+    };
+    S.library.push(item);
+    pushLibraryItem(item);
+    added++; segs += item.segments.length;
+  }
+  save();
+  return { added: added, skipped: skipped, segs: segs };
 }
 
 /* ───────────────────────── view: settings ───────────────────────── */
