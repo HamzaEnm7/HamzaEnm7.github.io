@@ -3,7 +3,7 @@
    Dictée sur audio importé, Lab, révisions et shadowing fonctionnent sans réseau.
    YouTube et Claude en ont évidemment besoin. */
 
-const CACHE = "schwa-v3";
+const CACHE = "schwa-v4";
 const SHELL = [
   "./", "./index.html", "./styles.css",
   "./content.js", "./corpus.js", "./ai.js", "./yt.js", "./app.js",
@@ -39,7 +39,7 @@ self.addEventListener("fetch", e => {
   // Coquille de l'app : réseau d'abord, cache en secours — pour recevoir les mises à jour.
   if (url.origin === location.origin) {
     e.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-cache" })   // revalide toujours : jamais de vieille copie servie en silence
         .then(res => {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});

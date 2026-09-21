@@ -2,6 +2,10 @@
 (function () {
 "use strict";
 
+/* Affiche en bas de l accueil. Sans lui, impossible de savoir si le telephone
+   montre la derniere version ou une copie gardee en memoire. */
+const VERSION = "v15 · 21/09";
+
 /* ───────────────────────── utils ───────────────────────── */
 
 const $  = (s, r) => (r || document).querySelector(s);
@@ -724,7 +728,7 @@ VIEWS.today = function (v) {
         </button>
         <button class="lesson-item" id="go-lib">
           <span class="num">▶</span>
-          <span class="grow"><span class="t">Importer une vidéo ou un épisode</span><span class="d">${S.library.length ? S.library.length + " source" + (S.library.length > 1 ? "s" : "") + " dans ta bibliothèque" : "Transcription YouTube ou sous-titres .srt — la vraie parole, pas la synthèse"}</span></span>
+          <span class="grow"><span class="t">Importer des podcasts ou une vidéo</span><span class="d">${S.library.length ? S.library.length + " source" + (S.library.length > 1 ? "s" : "") + " dans ta bibliothèque" : "Paquet de podcasts, transcription YouTube ou sous-titres .srt"}</span></span>
         </button>
       </div>
     </section>
@@ -768,6 +772,7 @@ VIEWS.today = function (v) {
         <p class="small muted" style="margin-top:8px">Le schwa <span class="mono" style="color:var(--accent)">/ə/</span> est la voyelle neutre sur laquelle l'anglais écrase tous ses mots non accentués. Le français ne fait pas ça. C'est, très littéralement, le son qui te sépare de la compréhension.</p>
       </div>
     </section>
+    <p class="mono tiny" style="text-align:center;color:var(--ink-3);margin-top:4px">Schwa ${esc(VERSION)}</p>
   </div>`;
 
   $("#next-up").onclick = () => go(na.view, na.param);
