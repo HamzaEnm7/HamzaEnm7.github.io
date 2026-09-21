@@ -55,6 +55,7 @@ const DEFAULT = {
   errorTypes: {},             // "Préposition" -> count
   writings: [],               // {at, prompt, text, level, verdict}
   library: [],                // {id, title, segments:[], hasAudio, at}
+  shortlist: [],              // videos reperees, en attente de leur vraie transcription
   aiPacks: []                 // {id, title, segments:[], at}
 };
 
@@ -1803,6 +1804,30 @@ VIEWS.library = function (v) {
       <button class="btn primary block" id="json-save">Importer l'analyse</button>
     </section>
 
+    ${S.shortlist.length ? `
+    <section class="stack">
+      <div class="section-head"><h2>Vidéos à traiter</h2><span class="eyebrow">${S.shortlist.length}</span></div>
+      <p class="small muted">Vérifiées sur YouTube. Il leur manque leur transcription — celle de YouTube, la vraie. Ouvre la vidéo, copie sa transcription, reviens la coller : le titre et le lien sont déjà remplis pour toi.</p>
+      <div class="stack-s">
+        ${S.shortlist.map((v, i) => {
+          const a = accentInfo(v.accent);
+          return `<div class="card stack-s">
+            <div class="spread">
+              <span class="row-tight tiny muted">${diffDots(v.level || 3)}${a ? " " + esc(a.flag) + " " + esc(a.label) : ""}</span>
+              <button class="btn sm bare" data-sl-del="${i}" aria-label="Retirer">✕</button>
+            </div>
+            <p class="small" style="font-weight:500">${esc(v.title)}</p>
+            ${v.channel ? `<p class="tiny muted">${esc(v.channel)}</p>` : ""}
+            ${v.why ? `<p class="tiny muted">${esc(v.why)}</p>` : ""}
+            <div class="row">
+              <a class="chip" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=${esc(v.yt)}">Ouvrir sur YouTube ↗</a>
+              <button class="btn sm primary" data-sl-use="${i}">Coller sa transcription</button>
+            </div>
+          </div>`;
+        }).join("")}
+      </div>
+    </section>` : ""}
+
     ${S.library.length ? `
     <section class="stack">
       <div class="section-head"><h2>Importés</h2><span class="eyebrow">${S.library.length}</span></div>
@@ -1858,6 +1883,21 @@ VIEWS.library = function (v) {
       toast("Copie automatique refusée — sélectionne et copie à la main");
     }
   };
+  $$("[data-sl-del]").forEach(b => b.onclick = () => {
+    S.shortlist.splice(parseInt(b.dataset.slDel, 10), 1); save(); render();
+  });
+  $$("[data-sl-use]").forEach(b => b.onclick = () => {
+    const v = S.shortlist[parseInt(b.dataset.slUse, 10)];
+    if (!v) return;
+    $("#lib-title").value = v.title;
+    $("#lib-yt").value = "https://www.youtube.com/watch?v=" + v.yt;
+    if (v.accent) $("#lib-accent").value = v.accent;
+    const ta = $("#lib-text");
+    ta.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => ta.focus(), 400);
+    toast("Titre et lien remplis — colle la transcription YouTube");
+  });
+
   $("#copy-curate").onclick = () => copyPrompt(
     curationPrompt(parseInt($("#cur-n").value, 10) || 5, $("#cur-theme").value.trim()));
   $("#copy-one").onclick = () => copyPrompt(analysisPrompt());
@@ -1866,6 +1906,27 @@ VIEWS.library = function (v) {
     const st = $("#json-status");
     const raw = $("#lib-json").value.trim();
     if (!raw) { st.innerHTML = '<p class="small" style="color:var(--bad)">Colle d\'abord la réponse.</p>'; return; }
+    // Une liste de videos n'a pas de segments ; une analyse en a. On aiguille dessus.
+    let probe = null;
+    try {
+      const m = raw.match(/[\[{][\s\S]*[\]}]/);
+      probe = JSON.parse(m ? m[0] : raw);
+    } catch (e) { probe = null; }
+    const asList = Array.isArray(probe) ? probe : (probe ? [probe] : []);
+    const isShortlist = asList.length > 0
+      && asList.every(d => d && !(Array.isArray(d.segments) && d.segments.length));
+
+    if (isShortlist) {
+      let list;
+      try { list = importShortlist(asList); }
+      catch (err) { st.innerHTML = '<p class="small" style="color:var(--bad)">' + esc(err.message) + '</p>'; return; }
+      st.innerHTML = '<div class="row-tight small muted"><span class="spinner"></span> Vérification des vidéos auprès de YouTube…</div>';
+      const checkedList = await verifyAll(list);
+      st.innerHTML = "";
+      openShortlistReview(checkedList);
+      return;
+    }
+
     let items;
     try { items = importAnalysis(raw); }
     catch (err) { st.innerHTML = '<p class="small" style="color:var(--bad)">' + esc(err.message) + '</p>'; return; }
@@ -2326,62 +2387,111 @@ const VERIFY_LABEL = {
 /* Le prompt de sélection : c'est lui qui demande à l'autre modèle de choisir
    les vidéos, pas seulement de découper celle qu'on lui donne. */
 function curationPrompt(n, theme) {
-  return `Tu prepares un programme d'entrainement a la comprehension de l'anglais oral.
+  return `Tu choisis des videos YouTube pour un programme d'entrainement a la
+comprehension de l'anglais oral.
 
 L'apprenant : francophone belge, niveau B1-B2. Il lit tres bien l'anglais mais
 decroche des qu'on parle vite. Son blocage n'est ni le vocabulaire ni la
-grammaire : c'est le decodage de la parole connectee, les voyelles reduites en
-schwa, les liaisons, les consonnes avalees, les contractions orales. Objectif :
-comprendre les films, series et podcasts sans sous-titres.
+grammaire : c'est le decodage de la parole connectee — voyelles reduites en
+schwa, liaisons, consonnes avalees, contractions orales. Objectif : comprendre
+les films, series et podcasts sans sous-titres.
 
-Selectionne ${n} videos YouTube et, dans chacune, LE meilleur passage de 3 a 5
-minutes pour ce travail.${theme ? " Theme souhaite : " + theme + "." : ""}
+Propose ${n} videos.${theme ? " Theme souhaite : " + theme + "." : ""}
 
-Criteres de selection, par ordre d'importance :
+Criteres, par ordre d'importance :
 1. De la vraie conversation entre plusieurs personnes, pas un monologue lu.
-   Les hesitations, les reprises et les chevauchements sont un atout, pas un defaut.
+   Les hesitations, les reprises et les chevauchements sont un atout.
 2. Une forte densite de reductions reelles.
-3. Varie les accents entre les videos : americain, britannique, et au moins un
-   autre (irlandais, australien, indien, sud-africain...).
-4. Varie la difficulte : commence par un debit modere, finis par du rapide.
-5. Des videos reellement en ligne et publiques. N'invente aucun identifiant :
-   si tu n'es pas certain qu'une video existe, ecarte-la. Les identifiants
-   seront verifies un par un aupres de YouTube, et les faux seront rejetes.
+3. Varie les accents : americain, britannique, et au moins un autre
+   (irlandais, australien, indien, sud-africain...).
+4. Varie la difficulte, de la plus accessible a la plus rapide.
+5. Des videos publiques dont les sous-titres automatiques sont disponibles.
 
-Pour chaque video, transcris le passage choisi en segments de 6 a 16 mots,
-decoupes sur les groupes de souffle, jamais au milieu d'une expression.
+NE TRANSCRIS RIEN. Ne produis aucun dialogue, aucun horodatage, aucune
+phonetique. Les mots exacts seront pris directement sur YouTube : toute
+transcription que tu ecrirais de memoire serait fausse et inutilisable.
 
-Reponds UNIQUEMENT avec un tableau JSON, sans aucun texte autour :
+N'invente aucun identifiant. Si tu n'es pas certain qu'une video existe,
+ecarte-la : chaque identifiant sera verifie aupres de YouTube.
+
+Reponds UNIQUEMENT avec ce tableau JSON, sans aucun texte autour :
 
 [
   {
-    "title": "titre court du passage",
     "yt": "identifiant de 11 caracteres",
+    "title": "titre de la video",
     "accent": "en-US",
-    "why": "une phrase en francais : ce que ce passage entraine precisement",
-    "segments": [
-      {
-        "full": "la phrase exacte, orthographe et ponctuation correctes",
-        "t": 123.4,
-        "e": 129.1,
-        "red": "reecrit comme ca sonne vraiment, ex: whaddaya gonna do aboudit",
-        "ipa": "API large avec les accents toniques",
-        "fr": "traduction francaise naturelle",
-        "tags": ["schwa"]
-      }
-    ]
+    "level": 3,
+    "why": "une phrase en francais : ce que cette video entraine precisement"
   }
 ]
 
-Regles de forme :
-- "t" et "e" en secondes depuis le debut de la video. Ils doivent etre exacts :
-  l'application decoupe l'audio dessus. Le format "2:03" est accepte aussi.
 - "accent" parmi : en-US, en-GB, en-AU, en-IE, en-IN, en-ZA, en-NZ, en-CA.
-- "tags" parmi : schwa (formes faibles), gonna (contractions orales), linking
-  (liaison), flap (T qui devient D), elision (consonne tombee), assim (did you
-  devient didja), hdrop (H muet des pronoms), rhythm (rythme accentuel).
-- Chaque segment doit contenir au moins une reduction reelle.
-- Classe les videos de la plus accessible a la plus difficile.`;
+- "level" de 1 (debit modere) a 5 (tres rapide).
+- Classe du plus accessible au plus difficile.`;
+}
+
+/* Une liste de videos reperees, sans transcription : c'est tout ce qu'un
+   modele peut fournir honnetement s'il n'a pas ecoute. Les mots viendront
+   de YouTube, qui les connait. */
+function importShortlist(list) {
+  const accents = ACCENTS.map(a => a.code);
+  const out = [];
+  for (const d of list) {
+    const id = ytId(d.yt || d.id || d.url || "");
+    if (!id) continue;
+    out.push({
+      yt: id,
+      title: (typeof d.title === "string" && d.title.trim()) ? d.title.trim().slice(0, 80) : "",
+      accent: accents.indexOf(d.accent) >= 0 ? d.accent : "",
+      level: Math.max(1, Math.min(5, parseInt(d.level, 10) || 3)),
+      why: typeof d.why === "string" ? d.why.slice(0, 220) : ""
+    });
+  }
+  if (!out.length) throw new Error("Aucun identifiant de vidéo exploitable dans cette liste.");
+  return out;
+}
+
+function openShortlistReview(checked) {
+  const good = checked.filter(c => c.check.state === "ok");
+  sheet(`
+    <h2 style="font-size:19px">Vidéos proposées</h2>
+    <p class="small muted" style="margin:6px 0 14px">Chaque identifiant a été soumis à YouTube. Le titre affiché est le vrai — compare-le à ce qui t'a été annoncé.</p>
+    <div class="stack-s">
+      ${checked.map(c => {
+        const L = VERIFY_LABEL[c.check.state] || VERIFY_LABEL.unknown;
+        const a = accentInfo(c.item.accent);
+        return `<div class="card stack-s">
+          <div class="spread">
+            <span class="row-tight tiny muted">${diffDots(c.item.level)}${a ? " " + esc(a.flag) + " " + esc(a.label) : ""}</span>
+            <span class="chip ${L.chip}">${esc(L.text)}</span>
+          </div>
+          ${c.check.state === "ok"
+            ? `<p class="small" style="font-weight:500">${esc(c.check.title)}</p><p class="tiny muted">${esc(c.check.author)}</p>`
+            : `<p class="small" style="color:var(--bad)">${esc(c.item.title || c.item.yt)} — cette vidéo n'existe pas.</p>`}
+          ${c.item.why ? `<p class="tiny muted">${esc(c.item.why)}</p>` : ""}
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="stack-s" style="margin-top:16px">
+      ${good.length ? `<button class="btn primary big block" id="sl-add">Garder les ${good.length} vidéos réelles</button>` : ""}
+      <button class="btn bare block" id="sl-cancel">Annuler</button>
+    </div>
+  `, (root, close) => {
+    const b = $("#sl-add", root);
+    if (b) b.onclick = () => {
+      for (const c of good) {
+        if (S.shortlist.some(x => x.yt === c.item.yt)) continue;
+        S.shortlist.push(Object.assign({}, c.item, {
+          title: c.check.title || c.item.title,
+          channel: c.check.author || ""
+        }));
+      }
+      save(); close(); render();
+      toast(good.length + " vidéo" + (good.length > 1 ? "s" : "") + " ajoutée" + (good.length > 1 ? "s" : "") + " à traiter");
+    };
+    $("#sl-cancel", root).onclick = close;
+  });
 }
 
 /* On ne montre jamais le titre annoncé par le modèle, mais celui que YouTube
@@ -2410,7 +2520,10 @@ function openImportReview(checked) {
 
   sheet(`
     <h2 style="font-size:19px">Vérification</h2>
-    <p class="small muted" style="margin:6px 0 14px">Chaque identifiant a été soumis à YouTube. Le titre ci-dessous est celui que <em>YouTube</em> renvoie, pas celui annoncé — c'est ainsi qu'on repère une vidéo inventée, ou une vraie vidéo qui ne parle pas du tout du sujet promis.</p>
+    <p class="small muted" style="margin:6px 0 10px">Chaque identifiant a été soumis à YouTube. Le titre ci-dessous est celui que <em>YouTube</em> renvoie, pas celui annoncé.</p>
+    <div class="plate small" style="margin-bottom:14px;border-left:3px solid var(--warn)">
+      Ceci prouve que la vidéo <strong>existe</strong>. Pas que la transcription lui corresponde. Un modèle qui n'a pas réellement écouté peut écrire un dialogue plausible sur une vraie vidéo — lance la lecture du premier segment avant de faire confiance au reste.
+    </div>
     <div class="stack-s">
       ${checked.map(c => {
         const L = VERIFY_LABEL[c.check.state] || VERIFY_LABEL.unknown;
