@@ -4,7 +4,7 @@
 
 /* Affiche en bas de l accueil. Sans lui, impossible de savoir si le telephone
    montre la derniere version ou une copie gardee en memoire. */
-const VERSION = "v16 · 21/09";
+const VERSION = "v17 · 21/09";
 
 /* ───────────────────────── utils ───────────────────────── */
 
@@ -1745,6 +1745,11 @@ VIEWS.library = function (v) {
     <section class="card stack-s" style="border-color:var(--accent)">
       <span class="eyebrow" style="color:var(--accent)">Paquet de podcasts</span>
       <p class="small">Plusieurs épisodes d'un coup, avec leur vrai audio et une transcription Whisper calée au mot près. Préparés par ton ordinateur.</p>
+      ${GHPACK.ready()
+        ? `<button class="btn primary big block" id="gh-sync">Charger les nouveaux épisodes</button>`
+        : `<p class="small">Pour que ce bouton charge tout seul les paquets préparés par ton ordinateur, ajoute ta clé d'accès dans <button class="link" id="gh-setup">Réglages → Podcasts automatiques</button>.</p>`}
+      <div id="gh-status"></div>
+      <span class="eyebrow" style="margin-top:6px">ou à la main</span>
       <label class="field" for="pack-file" style="gap:6px">
         <span class="small" style="font-weight:500">Choisis le fichier <span class="mono">schwa-podcasts-….zip</span></span>
         <input type="file" id="pack-file" accept=".zip,application/zip">
@@ -1960,6 +1965,28 @@ VIEWS.library = function (v) {
     st.innerHTML = "";
     openImportReview(checked);
   };
+
+  const ghs = $("#gh-sync");
+  if (ghs) ghs.onclick = async () => {
+    const st = $("#gh-status");
+    ghs.disabled = true;
+    st.innerHTML = '<div class="row-tight small muted"><span class="spinner"></span> Recherche des nouveaux épisodes…</div>';
+    try {
+      const r = await syncPodcasts((i, n, name) => {
+        st.innerHTML = '<div class="row-tight small muted"><span class="spinner"></span> ' + i + ' / ' + n + ' — ' + esc(name) + '</div>';
+      });
+      if (r.added) {
+        toast(r.added + " épisode" + (r.added > 1 ? "s" : "") + " · " + r.segs + " segments");
+        render();
+        return;
+      }
+      st.innerHTML = '<p class="small muted">Rien de nouveau : les ' + r.total + ' épisodes du dernier paquet sont déjà dans ta bibliothèque.</p>';
+    } catch (err) {
+      st.innerHTML = '<p class="small" style="color:var(--bad)">' + esc(err.message || "Chargement impossible.") + '</p>';
+    }
+    ghs.disabled = false;
+  };
+  const gsu = $("#gh-setup"); if (gsu) gsu.onclick = () => go("settings");
 
   $("#pack-file").onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
@@ -2784,26 +2811,88 @@ async function importPack(file, onStep) {
     const f = ep.audio && zip.file(ep.audio);
     if (!f || !Array.isArray(ep.segments) || !ep.segments.length) { skipped++; continue; }
 
-    const id = uid();
-    await Blobs.put(id, new Blob([await f.async("uint8array")], { type: "audio/mp4" }));
-    const item = {
-      id: id,
-      title: ((ep.podcast ? ep.podcast + " — " : "") + (ep.title || "Épisode")).slice(0, 90),
-      segments: ep.segments.slice(0, 220).filter(s => s && s.full).map(s => ({
-        full: String(s.full), t: Number(s.t), e: Number(s.e), red: "", ipa: "", fr: "", tags: []
-      })),
-      hasAudio: true,
-      at: dayKey(),
-      yt: "",
-      accent: accents.indexOf(ep.accent) >= 0 ? ep.accent : "",
-      srcKey: ep.key || ""
-    };
-    S.library.push(item);
-    pushLibraryItem(item);
+    const item = await storeEpisode(ep, new Blob([await f.async("uint8array")]));
     added++; segs += item.segments.length;
   }
   save();
   return { added: added, skipped: skipped, segs: segs };
+}
+
+/* ───────────────────────── dépôt privé ─────────────────────────
+   L'ordinateur publie ses paquets dans un dépôt GitHub privé ; le téléphone
+   les y lit avec une clé en lecture seule, limitée à ce seul dépôt. L'API de
+   GitHub autorise explicitement ces lectures depuis une page web. La clé reste
+   sur l'appareil et ne part que vers api.github.com. */
+
+const GHPACK = {
+  K_REPO: "schwa.ghRepo",
+  K_TOKEN: "schwa.ghToken",
+  DEFAULT: "HamzaEnm7/schwa-podcasts",
+  repo()  { try { return localStorage.getItem(this.K_REPO) || this.DEFAULT; } catch (e) { return this.DEFAULT; } },
+  token() { try { return localStorage.getItem(this.K_TOKEN) || ""; } catch (e) { return ""; } },
+  setRepo(v)  { try { v ? localStorage.setItem(this.K_REPO, v) : localStorage.removeItem(this.K_REPO); } catch (e) {} },
+  setToken(v) { try { v ? localStorage.setItem(this.K_TOKEN, v) : localStorage.removeItem(this.K_TOKEN); } catch (e) {} },
+  ready() { return !!this.token(); },
+
+  async get(path, asJson) {
+    let r;
+    try {
+      r = await fetch("https://api.github.com/repos/" + this.repo() + "/contents/" + encodeURIComponent(path), {
+        headers: {
+          "Authorization": "Bearer " + this.token(),
+          "Accept": "application/vnd.github.raw+json",
+          "X-GitHub-Api-Version": "2022-11-28"
+        },
+        cache: "no-store"
+      });
+    } catch (e) {
+      throw new Error("GitHub est injoignable — vérifie ta connexion.");
+    }
+    if (r.status === 401) throw new Error("Clé refusée par GitHub : elle a peut-être expiré. Recrée-la dans Réglages.");
+    if (r.status === 403) throw new Error("Accès refusé : cette clé ne donne pas accès au dépôt, ou trop de requêtes d'affilée.");
+    // pour un dépôt privé, GitHub répond 404 plutôt que 403 : il ne confirme pas son existence
+    if (r.status === 404) throw new Error("Introuvable dans " + this.repo() + " — vérifie le nom du dépôt et que la clé y a accès.");
+    if (!r.ok) throw new Error("GitHub a répondu " + r.status + ".");
+    return asJson ? r.json() : r.blob();
+  }
+};
+
+async function storeEpisode(ep, blob) {
+  const accents = ACCENTS.map(a => a.code);
+  const id = uid();
+  await Blobs.put(id, new Blob([blob], { type: "audio/mp4" }));
+  const item = {
+    id: id,
+    title: ((ep.podcast ? ep.podcast + " — " : "") + (ep.title || "Épisode")).slice(0, 90),
+    segments: ep.segments.slice(0, 220).filter(s => s && s.full).map(s => ({
+      full: String(s.full), t: Number(s.t), e: Number(s.e), red: "", ipa: "", fr: "", tags: []
+    })),
+    hasAudio: true,
+    at: dayKey(),
+    yt: "",
+    accent: accents.indexOf(ep.accent) >= 0 ? ep.accent : "",
+    srcKey: ep.key || ""
+  };
+  S.library.push(item);
+  pushLibraryItem(item);
+  return item;
+}
+
+async function syncPodcasts(onStep) {
+  const idx = await GHPACK.get("index.json", true);
+  if (!idx || !Array.isArray(idx.episodes)) throw new Error("L'index du dépôt est illisible.");
+  const fresh = idx.episodes.filter(ep =>
+    ep && ep.key && ep.audio && Array.isArray(ep.segments) && ep.segments.length
+    && !S.library.some(l => l.srcKey === ep.key));
+  let added = 0, segs = 0;
+  for (let i = 0; i < fresh.length; i++) {
+    const ep = fresh[i];
+    onStep && onStep(i + 1, fresh.length, ep.podcast || "");
+    const item = await storeEpisode(ep, await GHPACK.get(ep.audio, false));
+    added++; segs += item.segments.length;
+  }
+  save();
+  return { added: added, segs: segs, total: idx.episodes.length };
 }
 
 /* ───────────────────────── view: settings ───────────────────────── */
@@ -2877,6 +2966,22 @@ VIEWS.settings = function (v) {
     </section>
 
     <section class="stack">
+      <div class="section-head"><h2>Podcasts automatiques</h2><span class="chip ${GHPACK.ready() ? "ok" : ""}">${GHPACK.ready() ? "Actif" : "Inactif"}</span></div>
+      <p class="small muted">Ton ordinateur publie ses paquets de podcasts dans un dépôt GitHub privé. Cette clé permet au téléphone de les y lire — en lecture seule, et sur ce seul dépôt.</p>
+      <div class="field">
+        <label for="s-ghrepo">Dépôt</label>
+        <input type="text" id="s-ghrepo" value="${esc(GHPACK.repo())}" autocapitalize="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="s-ghtoken">Clé d'accès (lecture seule)</label>
+        <input type="password" id="s-ghtoken" value="${esc(GHPACK.token())}" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+        <span class="tiny muted">Elle reste sur ce téléphone et ne part que vers api.github.com. <a class="link" target="_blank" rel="noopener" href="https://github.com/settings/personal-access-tokens/new">Créer la clé sur GitHub ↗</a></span>
+      </div>
+      <button class="btn sm ghost" id="s-ghtest" style="align-self:flex-start">Tester l'accès</button>
+      <div id="s-ghstatus"></div>
+    </section>
+
+    <section class="stack">
       <div class="section-head"><h2>Données</h2></div>
       <div class="card flat stack-s">
         <p class="small muted">Tout est enregistré sur cet appareil, rien n'est envoyé nulle part. Pour passer sur un autre téléphone ou après avoir vidé le cache de Safari : exporte ici, importe là-bas. Les audios importés, eux, ne voyagent pas — ils sont trop lourds pour l'export.</p>
@@ -2917,6 +3022,23 @@ VIEWS.settings = function (v) {
       st.innerHTML = `<p class="small" style="color:var(--ok)">La clé fonctionne (${esc(aiCostNote())}). Réponse : ${esc(r.text.slice(0, 40))}</p>`;
     } catch (e) {
       st.innerHTML = `<p class="small" style="color:var(--bad)">${esc(aiErrorMessage(e))}</p>`;
+    }
+  };
+
+  $("#s-ghrepo").onchange = e => { GHPACK.setRepo(e.target.value.trim()); };
+  $("#s-ghtoken").onchange = e => { GHPACK.setToken(e.target.value.trim()); render(); };
+  $("#s-ghtest").onclick = async () => {
+    GHPACK.setRepo($("#s-ghrepo").value.trim());
+    GHPACK.setToken($("#s-ghtoken").value.trim());
+    const st = $("#s-ghstatus");
+    if (!GHPACK.ready()) { st.innerHTML = '<p class="small" style="color:var(--bad)">Colle d\'abord la clé.</p>'; return; }
+    st.innerHTML = '<div class="row-tight small muted"><span class="spinner"></span> Test en cours…</div>';
+    try {
+      const idx = await GHPACK.get("index.json", true);
+      const n = idx && Array.isArray(idx.episodes) ? idx.episodes.length : 0;
+      st.innerHTML = '<p class="small" style="color:var(--ok)">Accès confirmé : ' + n + ' épisode' + (n > 1 ? "s" : "") + ' dans le dernier paquet.</p>';
+    } catch (err) {
+      st.innerHTML = '<p class="small" style="color:var(--bad)">' + esc(err.message) + '</p>';
     }
   };
 
