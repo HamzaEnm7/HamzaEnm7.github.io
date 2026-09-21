@@ -1766,6 +1766,7 @@ VIEWS.library = function (v) {
       </div>
       <div class="field">
         <label for="lib-text">Transcription — sous-titres .srt/.vtt, transcription YouTube, ou texte brut</label>
+        <span class="tiny muted">Pour en enchaîner plusieurs : colle le lien de la vidéo sur une ligne seule, puis sa transcription, puis le lien suivant. L'app les sépare et les importe toutes d'un coup.</span>
         <textarea id="lib-text" rows="7" placeholder="0:04&#10;I don't know what you want me to say&#10;0:07&#10;but I'm not gonna apologize" spellcheck="false"></textarea>
       </div>
       <div class="field">
@@ -1950,6 +1951,36 @@ VIEWS.library = function (v) {
     if (!raw) { st.innerHTML = `<p class="small" style="color:var(--bad)">Colle d'abord une transcription ou des sous-titres.</p>`; return; }
     $("#lib-save").disabled = true;
 
+    // plusieurs liens YouTube dans le texte : c'est un lot, on traite tout d'un coup
+    const batch = splitBatch(raw);
+    if (batch) {
+      st.innerHTML = '<div class="row-tight small muted"><span class="spinner"></span> ' + batch.length + ' transcriptions détectées — vérification auprès de YouTube…</div>';
+      const built = [];
+      for (const b of batch) {
+        const p = parseTranscript(b.raw);
+        const segs = p.segs.length ? p.segs : splitPlain(b.raw);
+        if (!segs.length) continue;
+        const check = await verifyVideo(b.yt);
+        built.push({
+          item: {
+            id: uid(),
+            title: (check.state === "ok" && check.title) ? check.title.slice(0, 80) : ("Vidéo " + b.yt),
+            segments: segs.slice(0, 220),
+            hasAudio: false,
+            at: dayKey(),
+            yt: b.yt,
+            accent: ""
+          },
+          check: check
+        });
+      }
+      $("#lib-save").disabled = false;
+      st.innerHTML = "";
+      if (!built.length) { st.innerHTML = '<p class="small" style="color:var(--bad)">Aucune transcription exploitable dans ce lot.</p>'; return; }
+      openImportReview(built);
+      return;
+    }
+
     const parsed = parseTranscript(raw);
     let segments = parsed.segs;
     const timed = parsed.timed;
@@ -2055,6 +2086,62 @@ function parseYouTubeTranscript(raw) {
   if (valid.length < 2) return [];
   for (let i = 0; i < valid.length; i++) valid[i].e = i + 1 < valid.length ? valid[i + 1].t : valid[i].t + 5;
   return mergeCues(valid);
+}
+
+/* Plusieurs transcriptions collees a la suite, chacune precedee de son lien
+   YouTube. C'est la forme naturelle quand on enchaine les copier-coller :
+   une ligne de lien, la transcription, une ligne de lien, la suivante. */
+function splitBatch(raw) {
+  const lines = raw.replace(/\r/g, "").split("\n");
+  const marks = [];
+  lines.forEach((l, i) => {
+    const t = l.trim();
+    if (t.length && t.length < 140) {
+      const id = ytId(t);
+      if (id) marks.push({ i: i, id: id });
+    }
+  });
+  if (marks.length < 2) return null;
+  const out = [];
+  for (let k = 0; k < marks.length; k++) {
+    const from = marks[k].i + 1;
+    const to = (k + 1 < marks.length) ? marks[k + 1].i : lines.length;
+    const body = lines.slice(from, to).join("\n").trim();
+    if (body) out.push({ yt: marks[k].id, raw: body });
+  }
+  return out.length >= 2 ? out : null;
+}
+
+/* Une transcription inventee reste plausible phrase par phrase, mais trahit
+   l'invention a l'echelle du passage : quelques secondes couvertes la ou des
+   minutes etaient promises, des silences d'une regularite mecanique, des
+   debits hors de ce qu'un appareil phonatoire produit. */
+function plausibility(item) {
+  const warns = [];
+  const timed = item.segments.filter(s => s.t != null && s.e != null && s.e > s.t);
+  if (timed.length < 2) return warns;
+
+  const span = Math.max.apply(null, timed.map(s => s.e)) - Math.min.apply(null, timed.map(s => s.t));
+  if (span < 45) {
+    warns.push("Le passage ne couvre que " + Math.round(span) + " s. Un extrait de plusieurs minutes en ferait au moins 180.");
+  }
+
+  const rates = timed.map(s => tokens(s.full).length / (s.e - s.t));
+  const impossible = rates.filter(r => r < 1.2 || r > 7).length;
+  if (impossible) {
+    warns.push(impossible + (impossible > 1 ? " segments ont" : " segment a") + " un débit hors du possible (moins de 1,2 ou plus de 7 mots par seconde).");
+  }
+
+  const gaps = [];
+  for (let i = 1; i < timed.length; i++) gaps.push(timed[i].t - timed[i - 1].e);
+  if (gaps.length >= 2) {
+    const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    const spread = Math.max.apply(null, gaps) - Math.min.apply(null, gaps);
+    if (avg >= 0 && avg < 1 && spread < 0.35) {
+      warns.push("Les silences entre segments sont d'une régularité mécanique — signe d'horodatages calculés plutôt qu'entendus.");
+    }
+  }
+  return warns;
 }
 
 /** Works out which transcript format was pasted. */
@@ -2540,6 +2627,8 @@ function openImportReview(checked) {
               ? `<p class="tiny" style="color:var(--bad)">Cet identifiant ne correspond à aucune vidéo. Le texte reste utilisable en synthèse vocale, mais sans la vraie voix.</p>`
               : ""}
           <span class="tiny muted">${c.item.segments.length} segment${c.item.segments.length > 1 ? "s" : ""} · ${timed} horodaté${timed > 1 ? "s" : ""}${a ? " · " + esc(a.flag) + " " + esc(a.label) : ""}</span>
+          ${(plausibility(c.item) || []).map(w =>
+            `<p class="tiny" style="color:var(--warn)">⚠ ${esc(w)}</p>`).join("")}
         </div>`;
       }).join("")}
     </div>
