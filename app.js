@@ -1786,17 +1786,23 @@ VIEWS.library = function (v) {
       <div class="section-head"><h2>Analyse par un autre modèle</h2></div>
       <p class="small muted">Je ne peux pas regarder une vidéo. Un modèle qui en est capable, lui, peut te sortir une transcription horodatée avec la phonétique. Copie le prompt, donne-lui ta vidéo, et colle sa réponse ici : tout arrive d'un coup, sans passer par la transcription YouTube.</p>
       <div class="field">
-        <label for="cur-n">Combien de vidéos qu'il doit trouver</label>
-        <select id="cur-n"><option>3</option><option selected>5</option><option>8</option></select>
+        <label for="cur-n">Combien de vidéos</label>
+        <select id="cur-n"><option>2</option><option selected>3</option><option>5</option><option>8</option></select>
+        <span class="tiny muted">Au-delà de trois, un modèle tronque ou improvise pour tenir dans sa réponse — c'est exactement là qu'il se met à inventer. Trois complètes valent mieux que huit bâclées.</span>
       </div>
       <div class="field">
         <label for="cur-theme">Thème, si tu en veux un</label>
         <input type="text" id="cur-theme" placeholder="ex. cuisine, football, technologie, humour">
       </div>
+      <button class="btn primary block" id="copy-harvest">Vidéos + transcriptions, prêt à coller</button>
+      <p class="tiny muted">Sa réponse se colle dans le champ <strong>Transcription</strong> plus haut — pas dans celui d'en dessous. Elle arrive déjà au bon format.</p>
+      <hr class="rule">
+      <span class="eyebrow">Autres formules</span>
       <div class="row">
-        <button class="btn ghost grow" id="copy-curate">Qu'il choisisse les vidéos</button>
-        <button class="btn ghost grow" id="copy-one">Je donne la vidéo</button>
+        <button class="btn ghost sm grow" id="copy-curate">Liste de vidéos seule</button>
+        <button class="btn ghost sm grow" id="copy-one">Une vidéo que je donne</button>
       </div>
+      <p class="tiny muted">Ces deux-là répondent en JSON, qui se colle dans le champ ci-dessous.</p>
       <div class="field">
         <label for="lib-json">Sa réponse (JSON)</label>
         <textarea id="lib-json" rows="5" placeholder='{"title": "...", "yt": "...", "segments": [ ... ]}' spellcheck="false"></textarea>
@@ -1899,6 +1905,8 @@ VIEWS.library = function (v) {
     toast("Titre et lien remplis — colle la transcription YouTube");
   });
 
+  $("#copy-harvest").onclick = () => copyPrompt(
+    harvestPrompt(parseInt($("#cur-n").value, 10) || 3, $("#cur-theme").value.trim()));
   $("#copy-curate").onclick = () => copyPrompt(
     curationPrompt(parseInt($("#cur-n").value, 10) || 5, $("#cur-theme").value.trim()));
   $("#copy-one").onclick = () => copyPrompt(analysisPrompt());
@@ -2473,6 +2481,62 @@ const VERIFY_LABEL = {
 
 /* Le prompt de sélection : c'est lui qui demande à l'autre modèle de choisir
    les vidéos, pas seulement de découper celle qu'on lui donne. */
+/* Selection ET transcription en une fois, dans le format que le champ
+   Transcription avale tel quel : un lien par ligne, sa transcription dessous.
+   Rien a reformater. Le prompt interdit d'ecrire de memoire et demande
+   d'ecarter en silence toute video dont la transcription resiste — c'est le
+   seul moyen d'eviter qu'un modele comble les trous pour faire bonne figure. */
+function harvestPrompt(n, theme) {
+  return `Tu choisis des videos YouTube et tu en extrais la transcription reelle,
+pour un programme d'entrainement a la comprehension de l'anglais oral.
+
+L'apprenant : francophone belge, niveau B1-B2. Il lit tres bien l'anglais mais
+decroche des qu'on parle vite. Son blocage n'est ni le vocabulaire ni la
+grammaire : c'est le decodage de la parole connectee — voyelles reduites en
+schwa, liaisons, consonnes avalees, contractions orales.
+
+Choisis ${n} videos :${theme ? "\n- theme souhaite : " + theme + " ;" : ""}
+- de la vraie conversation entre plusieurs personnes, pas un monologue lu ;
+- les hesitations, les reprises et les chevauchements sont un atout ;
+- varie les accents d'une video a l'autre ;
+- classe-les de la plus accessible a la plus rapide.
+
+Pour chacune, utilise ton outil YouTube pour RECUPERER LA TRANSCRIPTION REELLE.
+Choisis ensuite un passage continu de 3 a 5 minutes, et recopie la transcription
+de ce passage telle quelle, horodatages compris, sans rien reformuler.
+
+INTERDICTION ABSOLUE d'ecrire une transcription de memoire ou de la deduire du
+sujet de la video. Si tu n'arrives pas a recuperer la transcription d'une video,
+ecarte cette video et prends-en une autre : ne le signale pas, ne t'excuse pas,
+retire-la simplement. Deux videos completes valent mieux que ${n} inventees.
+
+FORMAT DE SORTIE. Reponds uniquement par ceci : rien avant, rien apres, aucun
+commentaire, aucun titre, aucun bloc de code, aucune numerotation.
+
+https://www.youtube.com/watch?v=IDENTIFIANT
+0:12
+premiere ligne de la transcription
+0:16
+ligne suivante
+0:20
+ligne suivante
+
+https://www.youtube.com/watch?v=AUTRE_IDENTIFIANT
+2:05
+premiere ligne
+2:09
+ligne suivante
+
+Regles de format :
+- une ligne contenant le lien complet de la video, puis sa transcription dessous ;
+- une ligne vide entre deux videos ;
+- les horodatages sont ceux de YouTube, comptes depuis le debut de la video,
+  au format m:ss ou h:mm:ss, chacun sur sa propre ligne ;
+- garde les lignes exactement comme YouTube les donne, meme sans ponctuation
+  ni majuscules ;
+- aucune traduction, aucune phonetique, aucune explication, aucun resume.`;
+}
+
 function curationPrompt(n, theme) {
   return `Tu choisis des videos YouTube pour un programme d'entrainement a la
 comprehension de l'anglais oral.
