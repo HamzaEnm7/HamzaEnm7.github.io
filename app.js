@@ -4,7 +4,7 @@
 
 /* Affiche en bas de l accueil. Sans lui, impossible de savoir si le telephone
    montre la derniere version ou une copie gardee en memoire. */
-const VERSION = "v15 · 21/09";
+const VERSION = "v16 · 21/09";
 
 /* ───────────────────────── utils ───────────────────────── */
 
@@ -1750,7 +1750,7 @@ VIEWS.library = function (v) {
         <input type="file" id="pack-file" accept=".zip,application/zip">
       </label>
       <div id="pack-status"></div>
-      <p class="tiny muted">Sur l'ordinateur : double-clic sur <span class="mono">podcasts.bat</span> dans <span class="mono">schwa-tools</span>. Le paquet arrive dans OneDrive → Schwa ; sur le téléphone, choisis-le depuis Fichiers → OneDrive. Importe-le depuis l'app installée sur l'écran d'accueil, pas depuis Safari : les deux ne partagent pas leur stockage.</p>
+      <p class="tiny muted">Sur l'ordinateur : double-clic sur <span class="mono">podcasts.bat</span> dans <span class="mono">schwa-tools</span>. Envoie-le sur ton téléphone — par exemple par WhatsApp, en message à toi-même — puis « Enregistrer dans Fichiers ». Tu le choisis ensuite ici. Importe-le depuis l'app installée sur l'écran d'accueil, pas depuis Safari : les deux ne partagent pas leur stockage.</p>
     </section>
 
     <section class="card flat stack-s">
